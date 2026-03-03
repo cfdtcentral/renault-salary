@@ -1,93 +1,73 @@
 import streamlit as st
 import pandas as pd
-import os
+import numpy as np
 
-# --- CONFIGURATION ---
-ADMIN_PWD = "RENAULT_PRO_2026"
-MASTER_FILE = "Renault_Contributions.xlsx"
-ECO_FILE = "Renault_Grille_SMH_Inflation.xlsx"
+# --- CONFIGURATION DE LA PAGE ---
+st.set_page_config(page_title="Positionnement Salarial Renault", layout="wide")
 
-# Colonnes cibles (on va les chercher intelligemment)
-COL_MATRICULE = "Matricule de l'employé"
-COL_NOM = "Employé"
-COL_CLASSE = "Classe_Emploi"
+# --- CHARGEMENT DES DONNÉES (Initialement depuis Excel) ---
+@st.cache_data
+def load_data():
+    # Simulation du fichier Excel de 7625 salariés
+    df = pd.read_excel("base_salaires_renault.xlsx")
+    return df
 
-def load_all_data():
-    if not os.path.exists(MASTER_FILE):
-        return pd.DataFrame(), []
-    
-    try:
-        # On lit tous les onglets
-        all_sheets = pd.read_excel(MASTER_FILE, sheet_name=None)
-        cleaned_sheets = []
+data = load_data()
+
+# --- BARRE LATÉRALE : CONNEXION ---
+st.sidebar.title("🔑 Connexion")
+ipn_user = st.sidebar.text_input("Entrez votre IPN")
+
+# --- LOGIQUE DES ONGLETS ---
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Mon Positionnement", "✍️ Contribuer", "🔍 Tableau de Bord", "⚙️ Admin"])
+
+with tab1:
+    if ipn_user:
+        st.header(f"Analyse pour l'IPN : {ipn_user}")
+        # Extraction des données du salarié
+        user_info = data[data['IPN'] == ipn_user]
         
-        for sheet_name, df in all_sheets.items():
-            # SI LA LIGNE 1 EST "MEMBRES", ON REDÉFINIT LES TITRES
-            if "Membres" in str(df.columns[0]):
-                # On reprend le tableau à partir de la ligne suivante
-                df.columns = df.iloc[0]
-                df = df[1:].reset_index(drop=True)
+        if not user_info.empty:
+            col1, col2, col3 = st.columns(3)
+            # Calcul du percentile
+            cat = user_info['Categorie'].values[0]
+            salaires_cat = data[data['Categorie'] == cat]['Salaire']
+            percentile = (salaires_cat < user_info['Salaire'].values[0]).mean() * 100
             
-            # NETTOYAGE DES COLONNES (enlève les espaces, les sauts de ligne, les tirets)
-            df.columns = df.columns.astype(str).str.replace('\n', ' ').str.strip()
+            col1.metric("Votre Percentile", f"{percentile:.1f}%")
+            col2.metric("Écart à la Médiane", f"{user_info['Salaire'].values[0] - salaires_cat.median():.0f} €")
+            col3.metric("Écart H/F (Votre Cat)", "-2.4%") # Exemple statique
             
-            # Correction spécifique pour "Classe _Emploi" ou "Classe emploi"
-            df = df.rename(columns={
-                "Classe _Emploi": "Classe_Emploi",
-                "Classe emploi": "Classe_Emploi",
-                "Classe_Emploi": "Classe_Emploi"
-            })
-            
-            if not df.empty:
-                cleaned_sheets.append(df)
-            
-        if not cleaned_sheets:
-            return pd.DataFrame(), []
-            
-        df_global = pd.concat(cleaned_sheets, ignore_index=True, sort=False)
-        return df_global, list(all_sheets.keys())
-    except Exception as e:
-        st.error(f"Erreur technique lors de la lecture : {e}")
-        return pd.DataFrame(), []
-
-# --- INTERFACE ---
-st.set_page_config(page_title="Renault Salary Insight", layout="wide")
-st.title("💎 RENAULT SALARY INTELLIGENCE")
-
-df_global, liste_classes = load_all_data()
-
-tab_user, tab_admin = st.tabs(["📊 Mon Profil", "🔐 Administration"])
-
-with tab_user:
-    st.subheader("Identification Salarié")
-    u_mat = st.text_input("Saisissez votre Matricule de l'employé (8 chiffres)")
-    
-    if u_mat:
-        # On vérifie si la colonne matricule existe après nettoyage
-        if COL_MATRICULE in df_global.columns:
-            # Recherche flexible (enlève les espaces autour du matricule)
-            match = df_global[df_global[COL_MATRICULE].astype(str).str.contains(str(u_mat).strip(), na=False)]
-            
-            if not match.empty:
-                info = match.iloc[0]
-                st.success(f"✅ Bonjour {info[COL_NOM]}")
-                st.info(f"Fiche identifiée : {info.get('Poste', 'N/A')} | Classe : {info.get('Classe_Emploi', 'N/A')}")
-                
-                u_sal = st.number_input("Entrez votre salaire brut annuel actuel (€)", value=30000, step=500)
-                if st.button("Enregistrer ma contribution"):
-                    st.balloons()
-                    st.success("Donnée enregistrée temporairement (Simulation)")
-            else:
-                st.warning("Matricule non trouvé dans la base Renault_Contributions.")
+            # Graphique BoxPlot
+            st.subheader(f"Positionnement dans la catégorie {cat}")
+            st.boxplot(data=data[data['Categorie'] == cat], x='Categorie', y='Salaire')
         else:
-            st.error(f"La colonne '{COL_MATRICULE}' n'a pas été trouvée. Vérifiez vos entêtes Excel.")
-            st.write("Colonnes détectées :", list(df_global.columns))
+            st.warning("IPN inconnu. Veuillez contribuer pour voir vos stats.")
+    else:
+        st.info("💡 Connectez-vous avec votre IPN pour débloquer votre analyse personnalisée.")
 
-with tab_admin:
-    if st.text_input("Code Secret", type="password") == ADMIN_PWD:
-        st.write("### Gestion de la base")
-        if liste_classes:
-            choix = st.selectbox("Choisir l'onglet à vérifier", liste_classes)
-            # Re-lecture brute pour l'édition
-            df_edite = pd.read_excel(MASTER_FILE, sheet_name=choix)
-            st.data_editor(df_edite)
+with tab2:
+    st.header("Contribuer à la base")
+    with st.form("form_contribution"):
+        new_genre = st.selectbox("Genre", ["Homme", "Femme", "Autre"])
+        new_cat = st.selectbox("Catégorie", [f"A{i}" for i in range(1,6)] + [f"I{i}" for i in range(1,19)])
+        new_sal = st.number_input("Salaire Annuel Brut", min_value=20000)
+        submit = st.form_submit_button("Envoyer pour validation")
+        
+        if submit:
+            st.success("Données envoyées ! Elles apparaîtront après validation par l'administrateur.")
+
+with tab3:
+    st.header("Indicateurs Macro - Groupe Renault")
+    # Ici : Graphiques barres des médianes par catégorie
+    # Courbe Inflation vs SMH Métallurgie
+    st.line_chart(np.random.randn(10, 2)) # Placeholder pour Inflation/SMH
+
+with tab4:
+    st.header("🕵️ Zone Administrateur")
+    pwd = st.text_input("Mot de passe admin", type="password")
+    if pwd == "Renault2024":
+        st.write("Demandes en attente de validation :")
+        st.dataframe(data.head(5)) # Liste des derniers IPN inscrits
+        if st.button("Tout Valider"):
+            st.balloons()
